@@ -1,0 +1,413 @@
+---
+title: "Australia's Greenhouse Gas Emission Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    theme: sandstone
+    #storyboard: true
+    #orientation: rows
+    orientation: columns
+    #vertical_layout: scroll
+    #social: [ "twitter", "facebook", "menu"]
+    #source_code: embed
+    css: styles.css
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+library(flexdashboard)
+library(knitr)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(openintro)
+library(highcharter)
+library(ggvis)
+library(leaflet)
+library(rgeos)
+library(maptools)
+library(mapproj)
+library(rgdal)
+library(ggmap)
+library(broom)
+library(tidyr)
+library(scales)
+library(RColorBrewer)
+library(htmltools)
+library(plyr)
+```
+
+
+```{r}
+setwd("C:/Users/saurabh/Desktop/Data Vis/Data Emission")
+
+```
+Dashboard
+=====================================  
+Increasing carbon footprint is the biggest concern of this century and Australia ranks amongst the major carbon emitters, with an average per capita footprint of around 17 tonnes. This dashboard helps the viewer to understand, where does Australia stand in terms of its carbon emission and what policy makers can do to reduce country's carbon footprint. These plots are interactive, so the emission values can be viewed by hovering the pointer over plots, including the first plot, where major carbon emitters can be compared against Australia with their emission quantities.
+
+
+Row {data-height=600, .bgred}
+-------------------------------------
+### Australia has one of the highest per capita emissions of carbon dioxide in the world, with its 0.3% of the world's population releasing 1.07% of the world's greenhouse gases.
+
+```{r message=FALSE, warning=FALSE}
+
+# Read data into annual_emission object
+annual_emission <- read.csv('annual-co-emissions-by-region.csv') 
+annual_emission$emissions_in_tonnes<-round(annual_emission$emissions_in_tonnes/1000000, digits = 2)
+
+
+# Read data into per_capita_emission object
+per_capita_emission <- read.csv('co-emissions-per-capita.csv') 
+per_capita_emission$Per_capita_emissions_in_tonnes <- round(per_capita_emission$Per_capita_emissions_in_tonnes, digits = 2)
+# Merging two dataframes by country name
+emission<-merge(annual_emission,per_capita_emission, sort = TRUE, by = c("Entity","Year", "Code"))
+
+# Read data into population object
+population <- read.csv('datasets_507962_1091873_population_by_country_2020.csv')
+# sort in decresing order for population
+population_sorted <- population[order(-population$Population..2020.),]
+# put the country's name as Entity
+population_sorted$Entity <- population_sorted$Country..or.dependency.
+# filter top 100 populated countries
+population_sorted_top100 <- slice_max(population_sorted, population_sorted$Population..2020., n=100)
+# Merge to emission dataset, so we filtered the emission data only for 100 most populated country
+emission_pop<-merge(emission,population_sorted_top100, by = 'Entity')
+# sort the above df yearwise
+emission_pop_sorted <- emission_pop[order(emission_pop$Entity,emission_pop$Year),]
+
+# Filter only year 2017 data, to get the most recent per capita emission countries
+emission_pop_sorted_2017<- emission_pop_sorted %>% filter (Year == "2017")
+# Filter the top 10 highest per capita emission producing country
+emission_pop_sorted_2017_top10<-slice_max(emission_pop_sorted_2017, emission_pop_sorted_2017$Per_capita_emissions_in_tonnes, n=10 )
+# Join back to 1 step previous dataset to get emission rate from previous years
+emission_pop_sorted_top10<- subset(emission_pop_sorted, Entity %in% emission_pop_sorted_2017_top10$Entity)
+
+#emission_pop_sorted_top10$emission_in_tonnes<-emission_pop_sorted_top10$emission_in_tonnes/1000000
+emission_pop_sorted_top10_30yrs<- emission_pop_sorted_top10 %>% filter (Year >= 1990 & Year<2017)
+
+
+emission_pop_sorted_top10_30yrs$Entity <- revalue(emission_pop_sorted_top10_30yrs$Entity, c("United Arab Emirates"="UAE"))
+
+# Line Plot for top 10 per capita emission countries
+f1 <- list(
+  family = "Old Standard TT, serif",
+  size = 10
+  #color = "black"
+  )
+
+m <- list(
+  l = 30
+  #r = 50,
+  #b = 100,
+  #t = 100,
+  #pad = 4
+)
+
+xaxis <- list(title = "",
+             showgrid = FALSE,
+             zeroline = FALSE,
+             showline = FALSE,
+             dtick = 5
+             #showticklabels = FALSE
+             )
+yaxis <- list(title = "Metric Tonnes",
+             showgrid = FALSE,
+             zeroline = FALSE,
+             showline = FALSE,
+             titlefont = f1,
+             opacity = 0.1
+             #showticklabels = FALSE
+             )
+legend <- list(itemsizing='constant',
+               orientation = 'v',
+               font = list(family = "sans-serif", 
+                          size = 8, color = "#000")
+               
+             )
+
+
+emission_pop_sorted_top10_30yrs %>%
+highlight_key(~Entity) %>%
+  plot_ly(x = ~Year, y = ~Per_capita_emissions_in_tonnes,
+              color = ~Entity, type = "area", mode = "lines", 
+              colors = "Paired", reversescale=TRUE, hoverinfo = 'text',
+              text = ~paste("Country: ", Entity, "<br>Annual Emission: ", emissions_in_tonnes, 'Mil.Tn<br>Per Capita Emission: ',Per_capita_emissions_in_tonnes,
+                            "Mt Tn<br>Year: ", Year)) %>% 
+  layout(
+    #xaxis = list(zeroline = FALSE, title = "Year"),
+    #yaxis = list(zeroline = FALSE, title = "Emission volume"),
+    showlegend = TRUE,
+    xaxis = xaxis,
+    yaxis = yaxis,
+    margin = m,
+    legend = legend
+    
+  )  %>%
+  highlight(on = "plotly_click", off = "plotly_doubleclick",persistent = getOption("persistent", FALSE),
+  dynamic = FALSE,color = NULL,selectize = FALSE, defaultValues = "Australia", opacityDim = .2, selected = attrs_selected(showlegend = FALSE))%>%
+  config(displayModeBar = FALSE)
+
+
+
+
+```
+
+
+-----------------------------------------------------------------
+### Australia's emissions have been driven by electricity sector, followed by agriculture and transportation.
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# Read data into per_capita_emission object
+emissions_by_sector <- read.csv('ghg-emissions-by-sector.csv') 
+# Filter dataframe for Australia 
+emissions_by_sector_Aus <- emissions_by_sector  %>% filter(Entity == "Australia")
+emissions_by_sector_Aus$Electricity<- emissions_by_sector_Aus$Electricity...Heat
+emissions_by_sector_Aus$Manufacturing<- emissions_by_sector_Aus$Manufacturing.energy
+
+#Collapse dataframe
+emissions_by_sector_Aus_gathered<- emissions_by_sector_Aus %>%
+  select(Year, Agriculture, Manufacturing,
+         Transport, Electricity, Fugitive.emissions) %>%
+  gather(key = "Sector", value = "Emission_in_tonnes", -Year)
+
+emissions_by_sector_Aus_gathered$Emission_in_Mil._Tn<-emissions_by_sector_Aus_gathered$Emission_in_tonnes/1000000
+## Area Plot 
+# Give a specific order to all sectors:
+emissions_by_sector_Aus_gathered$Sector <- factor(emissions_by_sector_Aus_gathered$Sector , levels=c("Electricity","Agriculture", "Transport", "Manufacturing",
+                                                           "Fugitive.emissions"))
+options(scipen = 999)
+ggplotly(ggplot(emissions_by_sector_Aus_gathered, aes(fill=Sector, y=Emission_in_Mil._Tn, x=Year)) +
+           geom_area(position="stack", stat="identity") +
+          # annotate("text", x=2008, y=400, label= "Electricity" , 
+            #         colour = "black", size = 3) +
+           #annotate("text", x=2008, y=250, label= "Agriculture" , 
+            #          colour = "black", size = 3) +
+          # annotate("text", x=2008, y=100, label= "Transport" , 
+            #         colour = "black", size = 3) +
+          # annotate("text", x=2008, y=50, label= "Manufacturing" , 
+            #        colour = "black", size = 3) +
+           #annotate("text", x=2008, y=10, label= "Fugitive Emission" , 
+            #        colour = "black", size = 3) +
+           
+           labs(fill = "Sector")+
+           xlab("Year")+
+           ylab("Million Tonnes")+
+           #labs(title= "Breakdown of Australia's carbon footprint")+
+           scale_fill_brewer(palette="Set2", direction = 1 ) +
+           scale_x_continuous(breaks = seq(1990, 2016, by = 2))+
+           scale_y_continuous(breaks = seq(0, 600, len = 7))+
+           theme( 
+                  legend.title =element_blank(),
+                  legend.text = element_text(size = 6),
+                  legend.position = "top",
+                  
+                  axis.title.x = element_blank(),
+                  axis.title.y= element_text(family = "Old Standard TT, serif", size = 7),
+                  axis.ticks.x = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  #panel.grid.major = element_blank(), 
+                  #panel.grid.minor = element_blank(),
+                  plot.background = element_rect(fill = 'white'),
+                  panel.background = element_rect(fill = 'white')
+           )
+)%>%
+  config(displayModeBar = FALSE)
+```
+
+
+*** 
+
+Some commentary about Frame 1.
+
+Row {data-height=450, .bgred}
+-------------------------------------
+### Australia's maximum energy is generated from fossil fuels, coal accounts for majority of its total electricity generation, well above OECD average.
+
+```{r}
+# Read data into per_capita_emission object
+fuel_mix <- read.csv('fuel_mix_energy.csv') 
+fuel_mix_df <- as.data.frame(t(fuel_mix), stringsAsFactors = FALSE)
+
+# Remove first row
+fuel_mix_df <- fuel_mix_df[-1, ] 
+
+# Set column names
+fuel_mix_df <- setNames(cbind(rownames(fuel_mix_df), fuel_mix_df, row.names = NULL), 
+                        c("Fuel.mix", "OECD_avg.", "Australia"))
+
+fuel_mix_df$OECD_avg. <- as.numeric(fuel_mix_df$OECD_avg.)
+fuel_mix_df$Australia <- as.numeric(fuel_mix_df$Australia)
+
+
+# gather columns in single column
+fuel_mix_gathered <- fuel_mix_df %>% 
+  select(Fuel.mix,OECD_avg.,Australia) %>% 
+  gather(key = "Key", value = "Percentage", -Fuel.mix)
+
+fuel_mix_df$Fuel.mix <- factor(fuel_mix_df$Fuel.mix , 
+                                    levels=c("Coal.and.Peat", "Petroleum", "Gas"))
+
+fuel_mix_df$Fuel.mix <- revalue(fuel_mix_df$Fuel.mix, c("Coal.and.Peat"="Coal and Peat"))
+
+f1 <- list(
+  family = "Old Standard TT, serif",
+  size = 10
+  #color = "black"
+  )
+
+xaxis <- list(title = "",
+              showgrid = FALSE,
+              zeroline = FALSE,
+              showline = FALSE
+              
+              #showticklabels = FALSE
+)
+yaxis <- list(title = "Percentage",
+              showgrid = FALSE,
+              titlefont = f1,
+              zeroline = FALSE,
+              showline = FALSE
+)
+
+m <- list(
+  l = 30
+  #r = 50,
+  #b = 100,
+  #t = 100,
+  #pad = 4
+)
+
+
+  fig <- plot_ly(fuel_mix_df, x = ~Fuel.mix, y = ~Australia, type = 'bar', name = 'A',  colors = "#31a354",  opacity=0.80,                      hoverinfo = 'text',
+                 text = ~paste("Australia: ", Australia, "%<br>"), textposition = 'auto',
+                 marker = list(color = '#31a354',
+                               line = list(color = '#31a354', width = 1.5)))
+  fig <- fig %>% add_trace(y = ~OECD_avg., name = 'O',hoverinfo = 'text', text = ~paste("OECD Avg.: ", OECD_avg., "%<br>"), textposition = 'auto', 
+                           colors = "#D95F02",
+                           marker = list(color = '#D95F02',
+                                         line = list(color = '#D95F02', width = 1.5)))
+ 
+  fig <- fig %>% layout(yaxis = yaxis, xaxis = xaxis, barmode = 'group', showlegend = FALSE, margin = m)%>%
+  config(displayModeBar = FALSE)
+  fig
+
+
+
+  
+```
+
+
+### Animal agriculture is the leading cause of global warming, it emits about 50% of all greenhouse gases, over 20 years, more than all other sources.
+
+```{r}
+# Read data into per_capita_emission object
+Agriculture_emission_all <- read.csv('Agriculture emission.csv') 
+
+ 
+Agriculture_emission_sliced<-Agriculture_emission_all[1:8,1:5]
+Agriculture_emission_final <- slice_max(Agriculture_emission_sliced, Total.CO2.eMt., n=5)
+#Agriculture_emission_sliced_sorted <- Agriculture_emission_sliced[order(-Agriculture_emission_sliced$Total.CO2.eMt.),]
+Agriculture_emission <- Agriculture_emission_final[ , 1:4]
+
+
+Agriculture_emission$Greenhouse.gas.source <- revalue(Agriculture_emission$Greenhouse.gas.source, c("Enteric fermentation"="Livestock", "Prescribed burning of savanna"="Burning Savana", "Manure management" = "Manure", "Agricultural soils"="Soils", "Urea application" = "Urea"))
+Agriculture_emission$CO2<-Agriculture_emission$Carbon.dioxide.CO2.eMt.
+Agriculture_emission$Methane<-Agriculture_emission$Methane.CO2.eMt.
+Agriculture_emission$Nitrous.oxide<-Agriculture_emission$Nitrous.oxide.CO2.eMt.
+#Collapse dataframe
+Agriculture_emission_gathered<- Agriculture_emission %>%
+  select(Greenhouse.gas.source, CO2, Methane, Nitrous.oxide) %>%
+  gather(key = "Gas", value = "Emission_CO2_equivalent_Mt", -Greenhouse.gas.source)
+
+Agriculture_emission_gathered$Greenhouse.gas.source<- reorder(Agriculture_emission_gathered$Greenhouse.gas.source, -Agriculture_emission_gathered$Emission_CO2_equivalent_Mt)
+
+ggplotly(ggplot(Agriculture_emission_gathered, aes(fill=Gas, y=Emission_CO2_equivalent_Mt, x=Greenhouse.gas.source)) +
+  geom_bar(stat="identity") +
+  #stat_summary(aes(label = stat(y)), fun= 'sum', geom = 'text', col = 'black', vjust = 1.5) +
+  #stat_summary(fun.y = sum, aes(label = ..y.., group = Gas), geom = "text")
+  labs(fill = "Gas")+
+ # xlab("Greenhouse gas source")+
+  ylab("CO2.e Mt")+
+ # labs(title= "Breakdown of Emission from Agriculture Sector")+
+  #geom_text(aes(label = c("66.3%","15.5%","10.8%","3.9%","1.5%","","","","","","","","","","" )),
+    #size = 3, hjust = 0.5, vjust = 0, position = "stack")+
+  #geom_text(aes(label=Greenhouse.gas.source),vjust=0, size=10)+
+  scale_y_continuous(breaks = seq(0, 60, len = 4))+
+  scale_fill_brewer(palette="Set2", direction = 1 ) +
+  theme( 
+         #title = element_text(face = "bold"),
+         legend.title =element_blank(),
+         legend.text = element_text(size = 5.75),
+         axis.title.x= element_blank(),
+         axis.title.y= element_text(family = "Old Standard TT, serif", size = 6.5),
+         axis.ticks.x= element_blank(),
+         axis.ticks.y = element_blank(),
+        # panel.grid.major = element_blank(), 
+       #  panel.grid.minor = element_blank(),
+         legend.position = "top",
+         plot.background = element_rect(fill = 'white'),
+         panel.background = element_rect(fill = 'white')
+  ) 
+)%>%
+  config(displayModeBar = FALSE)
+
+```
+
+
+
+
+### Transport emissions have grown more than any other sector, increasing nearly 60% since 1990.
+
+```{r message=FALSE, warning=FALSE}
+
+
+# Read data into per_capita_emission object
+Emission_from_transport <- read.csv('Emission_from_transport.csv') 
+
+Emission_from_transport$Transport <- reorder(Emission_from_transport$Transport, -Emission_from_transport$Average_emissions_per_kilometre.person_.gCO2..km.)
+
+Emission_from_transport$Emissions_gCO2_per_person_per_km<-Emission_from_transport$Average_emissions_per_kilometre.person_.gCO2..km.
+
+Emission_from_transport$Transport<-revalue(Emission_from_transport$Transport, c("Metro_train "="Metro Train", "Light_rail "="Light Rail"))
+# Bar Plot
+ggplotly(ggplot(data=Emission_from_transport, aes(x=Transport, y=Emissions_gCO2_per_person_per_km)) +
+           geom_bar(stat="identity",fill='#8AA4E5') +
+           #geom_text(aes(label = c("12g","13g","18g","184g")),
+           #size = 5, hjust = 0.5, vjust = 0)+
+           #  labs(title= "Emission from different forms of transport per km/person")+
+           #geom_text(aes(label=Average_emissions_per_kilometre.person_.gCO2..km.),vjust=0, size=10)+
+           theme(axis.text.x = element_text()) +
+           xlab("Transport Mode")+ 
+           ylab("gCO2/pkm")+
+           theme( legend.title =element_blank(),
+                  legend.text = element_blank(),
+                  legend.position = "none",
+                  axis.title.x = element_blank(),
+                  axis.title.y= element_text(family = "Old Standard TT, serif", size = 6.5),
+                  axis.ticks.x= element_blank(),
+                  axis.ticks.y = element_blank(),
+                  plot.background = element_rect(fill = 'white'),
+                  panel.background = element_rect(fill = 'white'),
+                  #panel.grid.major = element_blank(), 
+                  panel.grid.minor = element_blank()
+                  
+                  
+           ))%>%
+  config(displayModeBar = FALSE)
+
+```
+
+Data Sources
+============================================
+[1] Greenhouse Gas Emissions - Sources of Greenhouse Gas Emissions - (2020) - https://www.epa.gov/ghgemissions/sources-greenhouse-gas-emissions [Accessed 14 June 2020]
+
+[2] CO2 and Greenhouse Gas Emissions - Per capita CO2 emissions - (2019) -  https://ourworldindata.org/co2-and-other-greenhouse-gas-emissions [Accessed 14 June 2020]
+
+[3] How Australia accounts for agricultural greenhouse gas emissions - (2020) - Agriculture is an important source of greenhouse gas emissions - https://www.agric.wa.gov.au/climate-change/how-australia-accounts-agricultural-greenhouse-gas-emissions [Accessed 14 June 2020]
+
+[4] Fuel mix contributing to total primary energy supply - Australia 2013 and OECD average 2014 - (2016)  - https://soe.environment.gov.au/file/44236 [Accessed 14 June 2020]
+
+[5] CO2 and Greenhouse Gas Emissions - Total greenhouse gas emissions - (2019) -  https://ourworldindata.org/co2-and-other-greenhouse-gas-emissions [Accessed 14 June 2020]
+
+[6] Factsheet Transport Emission: Driving Down Car Pollution in Cities - Table 2: Emissions for different forms of transport - (2016) - https://www.climatecouncil.org.au/resources/transport-fact-sheet/https://www.climatecouncil.org.au/wp-content/uploads/2017/09/FactSheet-Transport.pdf [Accessed 14 June 2020]
